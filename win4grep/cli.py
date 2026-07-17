@@ -28,14 +28,21 @@ def cmd_import(args: argparse.Namespace) -> int:
 def cmd_findings(args: argparse.Namespace) -> int:
     with Cache(args.db) as cache:
         rows = cache.get_findings(args.source or None)
+        hidden = 0
         if args.severity:
             rows = [r for r in rows if r["severity"] == args.severity]
+        else:
+            hidden = sum(1 for r in rows if r["severity"] == "low")
+            rows = [r for r in rows if r["severity"] != "low"]
         color = {"high": "\033[31m", "medium": "\033[33m", "low": "\033[90m"}
         for r in rows:
             c = color.get(r["severity"], "")
             print(f"{c}[{r['severity']:6}]\033[0m {r['rule']:22} {r['match'][:70]}")
             print(f"         \033[36m{r['source']}\033[0m :: {r['path']}")
         print(f"\n[{len(rows)} finding(s)]", file=sys.stderr)
+        if hidden:
+            print(f"[{hidden} low confidence hidden, use --severity low to see them]",
+                  file=sys.stderr)
     return 0
 
 

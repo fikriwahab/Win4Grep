@@ -4,6 +4,8 @@ Inspired by VisualGrep, shoutout to the OG. Built to supplement my needs on iOS 
 
 Win4Grep takes an iOS app data dump and lets you search everything inside it, including the stuff that normal search tools can't read because it's binary or encoded.
 
+> Note: Some features are still under development and need improvement. Beware that the PII or secret flagging feature might detect false positives or missing out things.
+
 ## The problem it solves
 
 A lot of what's inside an app data dump isn't plain text. It is (usually) in binary plists, NSKeyedArchiver blobs, SQLite, cookies, protobuf, or base64/gzip, so a normal text search often misses it.

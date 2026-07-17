@@ -132,14 +132,14 @@ class Cache:
 
         for r in rows:
             text = r["text"]
-            for f in scan_text(text):
+            for f in scan_text(text, r["locator"], r["path"]):
                 emit(r, f, text[max(0, f.start - 40):f.end + 40])
             # by field name (locator)
             kf = scan_locator(r["locator"], text)
             if kf is not None:
                 emit(r, kf, f"{r['locator']} = {text[:80]}")
-            # high-entropy key/seed blob (e.g. obfuscated AES seed in prefs)
-            vf = scan_value_shape(text)
+            # high entropy key or seed blob such as an obfuscated aes seed in prefs
+            vf = scan_value_shape(r["locator"], text)
             if vf is not None:
                 emit(r, vf, f"{r['locator']}: {text[:60]}")
         if batch:

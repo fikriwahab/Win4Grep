@@ -94,17 +94,61 @@ class Finding:
     end: int
 
 
-# values that look like a credential match but are really code / build artifacts
+# values that look like a credential match but are really code or build artifacts
 _CRED_DENY = re.compile(
     r"(?i)^(=+|loop-|inline|asm-|prolog|epilog|true|false|null|nil|undefined|"
     r"function|return|void|const|let|var|type|self|this|none)\b|===|=>|\.type|\.value")
 
+_PLACEHOLDER = re.compile(
+    r"(?i)^(x{3,}|\*{3,}|\.{3,}|-{3,}|your[_-][\w-]*|<.+>|changeme|example|sample|redacted|"
+    r"null|none|todo|placeholder|dummy|password|test\d*|string|value|default|n/?a)$|^(.)\2{4,}$")
+
+_KEYISH_CTX = re.compile(r"(?i)key|secret|seed|token|\biv\b|\bsalt\b|\baes\b|\bhmac\b|mnemonic|passw|cipher|priv|credential|session")
+_CARDISH_CTX = re.compile(r"(?i)card|\bpan\b|kartu|cc[_-]?num|creditcard")
+_LOCALE_CTX = re.compile(r"(?i)languagepack|localiz|l10n|i18n|translation|\blang\b|locale|\bstrings\b")
+_JUNK_CTX = re.compile(r"(?i)measurement|analytics|firebase|gmp|instance_id|mpaas|automation|cfurl|\bcache\b|device[_-]?id|uuidfordevice")
+
+_ARCHIVE_NOISE = re.compile(r"(?i)ns\.keys|ns\.objects|ns\.string|\$objects|\$archiver|bplist")
+
+_WORDS = re.compile(r"^[A-Za-z][A-Za-z ]{3,}$")
+
+
+def _context(locator: str, path: str = "") -> str:
+    return _ARCHIVE_NOISE.sub(" ", f"{locator or ''} {path or ''}")
+
+
+def _looks_benign(value: str) -> bool:
+    v = value.strip().strip("\"'")
+    return bool(_CRED_DENY.search(v) or _PLACEHOLDER.search(v))
+
 
 def _cred_ok(value: str) -> bool:
-    return not _CRED_DENY.search(value)
+    return not _looks_benign(value)
 
 
-def scan_text(text: str, max_per_rule: int = 5) -> Iterator[Finding]:
+def _weigh(name: str, base: str, value: str,
+           keyish: bool, cardish: bool, locale: bool, junk: bool) -> str:
+    if name == "UUID / device id":
+        return MEDIUM if keyish else LOW
+    if name == "Password field":
+        v = value.strip().strip("\"'")
+        if locale or (" " in v and _WORDS.match(v)):
+            return LOW
+        return base
+    if name == "Credit card":
+        if cardish:
+            return MEDIUM
+        return LOW if junk else base
+    return base
+
+
+def scan_text(text: str, locator: str = "", path: str = "",
+              max_per_rule: int = 5) -> Iterator[Finding]:
+    ctx = _context(locator, path)
+    keyish = bool(_KEYISH_CTX.search(ctx))
+    cardish = bool(_CARDISH_CTX.search(ctx))
+    locale = bool(_LOCALE_CTX.search(ctx))
+    junk = bool(_JUNK_CTX.search(ctx))
     for rule in RULES:
         n = 0
         for m in rule.pattern.finditer(text):
@@ -116,7 +160,8 @@ def scan_text(text: str, max_per_rule: int = 5) -> Iterator[Finding]:
                 continue
             if rule.validator == "cred" and not _cred_ok(value):
                 continue
-            yield Finding(rule.name, rule.severity, full[:200], m.start(), m.end())
+            sev = _weigh(rule.name, rule.severity, value, keyish, cardish, locale, junk)
+            yield Finding(rule.name, sev, full[:200], m.start(), m.end())
             n += 1
             if n >= max_per_rule:
                 break
@@ -137,7 +182,7 @@ def scan_locator(locator: str, value: str) -> Finding | None:
     if not locator or not value:
         return None
     v = value.strip()
-    if len(v) < 2 or len(v) > 400 or _CRED_DENY.search(v):
+    if len(v) < 2 or len(v) > 400 or _looks_benign(v):
         return None
     for rx, sev, label in _KEY_RULES:
         if rx.search(locator):
@@ -159,13 +204,16 @@ def _entropy(b: bytes) -> float:
     return -sum((c / n) * math.log2(c / n) for c in counts if c)
 
 
-def scan_value_shape(value: str) -> Finding | None:
-    # flag a high-entropy base64/hex value that decodes to a 16/24/32-byte key
+def scan_value_shape(locator: str, value: str) -> Finding | None:
+    # flag a high entropy base64 or hex value that decodes to a 16 24 or 32 byte key
     v = value.strip()
+    keyish = bool(_KEYISH_CTX.search(_context(locator)))
     if _HEXKEY.match(v):
-        return Finding("Candidate key/seed (hex)", MEDIUM, v, 0, len(v))
+        if keyish:
+            return Finding("Candidate key/seed (hex)", MEDIUM, v, 0, len(v))
+        return Finding("High entropy hex (hash or key)", LOW, v, 0, len(v))
     if _B64_BLOB.match(v):
-        # a readable identifier is letters-only, real keys carry a digit or +/
+        # a readable identifier is letters only, real keys carry a digit or symbol
         if not re.search(r"[0-9+/]", v):
             return None
         try:

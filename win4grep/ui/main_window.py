@@ -148,9 +148,10 @@ class MainWindow(QMainWindow):
 
     def _build_findings_tab(self) -> QWidget:
         self.sev_filter = QComboBox()
-        self.sev_filter.addItem("All severities", None)
+        self.sev_filter.addItem("Signal (hide low)", "signal")
         for s in ("high", "medium", "low"):
-            self.sev_filter.addItem(s, s)
+            self.sev_filter.addItem(s.capitalize(), s)
+        self.sev_filter.addItem("All (incl. low)", None)
         self.sev_filter.currentIndexChanged.connect(self._reload_findings)
 
         self.finding_source = QComboBox()
@@ -371,7 +372,9 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             self.statusBar().showMessage(f"Findings error: {exc}")
             return
-        if sev:
+        if sev == "signal":
+            rows = [r for r in rows if r["severity"] != "low"]
+        elif sev:
             rows = [r for r in rows if r["severity"] == sev]
         self.findings_model.set_rows(rows)
         self.tabs.setTabText(1, f"Findings ({len(rows)})")
